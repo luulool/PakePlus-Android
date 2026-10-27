@@ -560,7 +560,7 @@
       <button class="btn btn-primary" onclick="closeModal('settingsModal'); openThemeModal()" style="justify-content:flex-start;">🎨 主题切换</button>
       <button class="btn btn-primary" onclick="closeModal('settingsModal'); openCatManager()" style="justify-content:flex-start;">📁 分类管理</button>
       <button class="btn btn-primary" onclick="closeModal('settingsModal'); openChangePwd()" style="justify-content:flex-start;">🔑 修改密码</button>
-      <button class="btn btn-primary" id="adminBtn" onclick="closeModal('settingsModal'); openUserManage()" style="justify-content:flex-start; display:none;">👥 用户管理</button>
+      <button class="btn btn-primary" id="adminBtn" onclick="closeModal('settingsModal'); openUserManage()" style="display:none;">👥 用户管理</button>
       <button class="btn btn-primary" onclick="exportData()" style="justify-content:flex-start;">📤 导出数据(Excel)</button>
       <button class="btn btn-primary" onclick="importData()" style="justify-content:flex-start;">📥 导入数据(Excel)</button>
       <button class="btn btn-primary" onclick="closeModal('settingsModal'); clearAllData()" style="justify-content:flex-start; background:linear-gradient(135deg,#ff6b6b,#ee5a5a);">🗑 清空本地全部数据</button>
@@ -798,6 +798,42 @@ function userDataKey(username) {
 
 // 从localStorage读取上次的服务器地址，没有就用默认值
 const DEFAULT_SERVER = 'http://192.168.31.114:5000';
+
+// ========== 统一HTTP请求封装（全部用XHR，绕开fetch拦截） ==========
+function httpFetch(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = options.body || null;
+  const headers = options.headers || {};
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    // 设置headers
+    for (const k in headers) {
+      xhr.setRequestHeader(k, headers[k]);
+    }
+    // POST请求默认JSON
+    if (method === 'POST' && !headers['Content-Type']) {
+      xhr.setRequestHeader('Content-Type', 'application/json');
+    }
+    xhr.onload = function() {
+      try {
+        resolve({ json: () => Promise.resolve(JSON.parse(xhr.responseText)) });
+      } catch(e) {
+        resolve({ json: () => Promise.resolve({ ok: false, error: '返回数据格式错误: ' + xhr.responseText.slice(0,100) }) });
+      }
+    };
+    xhr.onerror = function() {
+      reject(new Error('网络请求失败: ' + (xhr.statusText || '连接超时')));
+    };
+    xhr.ontimeout = function() {
+      reject(new Error('请求超时(15秒)'));
+    };
+    xhr.timeout = 15000;
+    xhr.send(method === 'POST' ? body : null);
+  });
+}
+
 function loadServerAddr() {
   const saved = localStorage.getItem(SERVER_KEY);
   document.getElementById('serverAddr').value = saved || DEFAULT_SERVER;
@@ -1040,7 +1076,7 @@ async function onServerChange() {
   errEl.textContent = '加载用户列表...';
 
   try {
-    const res = await fetch(selectedServer.addr + '/api/users');
+    const res = await httpFetch(selectedServer.addr + '/api/users');
     const data = await res.json();
     if (data.ok) {
       const users = data.users || [];
@@ -1088,7 +1124,7 @@ async function doLogin() {
 
   errEl.textContent = '登录中...';
   try {
-    const res = await fetch(selectedServer.addr + '/api/login', {
+    const res = await httpFetch(selectedServer.addr + '/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: selectedUser, password })
@@ -1139,7 +1175,7 @@ async function createUser() {
       body.admin_user = currentUser;
       body.admin_pwd = currentUserPwd;
     }
-    const res = await fetch(server + '/api/users/create', {
+    const res = await httpFetch(server + '/api/users/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -1159,7 +1195,7 @@ async function createUser() {
       showToast(data.error || '创建失败');
     }
   } catch(e) {
-    showToast('网络错误');
+    showToast('网络错误：' + (e.message || ''));
   }
 }
 
@@ -1171,7 +1207,7 @@ async function openUserManage() {
   document.getElementById('userManageModal').classList.add('show');
 
   try {
-    const res = await fetch(currentServer + '/api/users');
+    const res = await httpFetch(currentServer + '/api/users');
     const data = await res.json();
     if (data.ok) {
       const users = data.users || [];
@@ -1201,7 +1237,7 @@ async function openUserManage() {
 async function resetPwd(name) {
   if (!confirm(`确定将用户「${name}」的密码重置为 123456 吗？`)) return;
   try {
-    const res = await fetch(currentServer + '/api/users/reset', {
+    const res = await httpFetch(currentServer + '/api/users/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1218,13 +1254,13 @@ async function resetPwd(name) {
       showToast(data.error || '重置失败');
     }
   } catch(e) {
-    showToast('网络错误');
+    showToast('网络错误：' + (e.message || ''));
   }
 }
 async function delUser(name) {
   if (!confirm(`确定删除用户「${name}」吗？该用户的所有数据都会丢失！`)) return;
   try {
-    const res = await fetch(currentServer + '/api/users/delete', {
+    const res = await httpFetch(currentServer + '/api/users/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1241,7 +1277,7 @@ async function delUser(name) {
       showToast(data.error || '删除失败');
     }
   } catch(e) {
-    showToast('网络错误');
+    showToast('网络错误：' + (e.message || ''));
   }
 }
 
@@ -1261,7 +1297,7 @@ async function changeMyPwd() {
   if (newP !== newP2) { showToast('两次新密码不一致'); return; }
 
   try {
-    const res = await fetch(currentServer + '/api/users/changepwd', {
+    const res = await httpFetch(currentServer + '/api/users/changepwd', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1283,7 +1319,7 @@ async function changeMyPwd() {
       showToast(data.error || '修改失败');
     }
   } catch(e) {
-    showToast('网络错误');
+    showToast('网络错误：' + (e.message || ''));
   }
 }
 
@@ -1675,7 +1711,7 @@ function autoSync() {
         note: i.note || '',
         updated_at: new Date().toLocaleString(),
       }));
-      await fetch(currentServer + '/api/sync', {
+      await httpFetch(currentServer + '/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ table: 'password_records', records })
@@ -1782,7 +1818,7 @@ async function loadLocalSyncUsers() {
   const server = list[parseInt(idx)];
   userSel.innerHTML = '<option value="">加载中...</option>';
   try {
-    const res = await fetch(server.addr + '/api/users');
+    const res = await httpFetch(server.addr + '/api/users');
     const data = await res.json();
     if (data.ok) {
       const users = data.users || [];
@@ -1815,7 +1851,7 @@ async function verifySyncPwd(serverAddr, username, password) {
   }
   statusEl.textContent = '正在校验用户密码...';
   try {
-    const res = await fetch(serverAddr + '/api/login', {
+    const res = await httpFetch(serverAddr + '/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: username, password: password })
@@ -1828,8 +1864,8 @@ async function verifySyncPwd(serverAddr, username, password) {
     showToast('密码校验失败');
     return false;
   } catch (e) {
-    statusEl.textContent = '无法连接服务器，密码校验失败';
-    showToast('无法连接服务器');
+    statusEl.textContent = '密码校验失败：' + (e.message || e.toString());
+    showToast('连接失败：' + (e.message || ''));
     return false;
   }
 }
@@ -1848,7 +1884,7 @@ async function localDownloadFromServer() {
   statusEl.textContent = '正在从数据库下载...';
 
   try {
-    const res = await fetch(server + '/api/download', {
+    const res = await httpFetch(server + '/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: targetUser })
@@ -1887,7 +1923,7 @@ async function localDownloadFromServer() {
       statusEl.textContent = data.error || '下载失败';
     }
   } catch(e) {
-    statusEl.textContent = '无法连接服务器';
+    statusEl.textContent = '同步失败：' + (e.message || e.toString());
   }
 }
 
@@ -1917,7 +1953,7 @@ async function localSyncToServer() {
       updated_at: new Date().toLocaleString(),
     }));
 
-    const res = await fetch(server + '/api/sync_increment', {
+    const res = await httpFetch(server + '/api/sync_increment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1933,7 +1969,7 @@ async function localSyncToServer() {
       statusEl.textContent = data.error || '同步失败';
     }
   } catch(e) {
-    statusEl.textContent = '无法连接服务器';
+    statusEl.textContent = '同步失败：' + (e.message || e.toString());
   }
 }
 
@@ -1944,7 +1980,7 @@ async function downloadFromServer() {
   statusEl.textContent = '正在从数据库递增下载...';
 
   try {
-    const res = await fetch(currentServer + '/api/download', {
+    const res = await httpFetch(currentServer + '/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: currentUser })
@@ -1994,7 +2030,7 @@ async function downloadFromServer() {
       statusEl.textContent = data.error || '下载失败';
     }
   } catch(e) {
-    statusEl.textContent = '无法连接服务器';
+    statusEl.textContent = '同步失败：' + (e.message || e.toString());
   }
 }
 
@@ -2017,7 +2053,7 @@ async function doSyncNow() {
   }));
 
   try {
-    const res = await fetch(currentServer + '/api/sync_increment', {
+    const res = await httpFetch(currentServer + '/api/sync_increment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2033,7 +2069,7 @@ async function doSyncNow() {
       statusEl.textContent = data.error || '同步失败';
     }
   } catch(e) {
-    statusEl.textContent = '无法连接服务器';
+    statusEl.textContent = '同步失败：' + (e.message || e.toString());
   }
 }
 
@@ -2044,7 +2080,7 @@ async function fullUploadToServer() {
   statusEl.textContent = '正在全量上传...';
   try {
     const items = getItems();
-    const res = await fetch(selectedServer.addr + '/api/full_sync', {
+    const res = await httpFetch(selectedServer.addr + '/api/full_sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: selectedUser, records: items })
@@ -2067,7 +2103,7 @@ async function fullDownloadFromServer() {
   const statusEl = document.getElementById('syncStatus');
   statusEl.textContent = '正在全量下载...';
   try {
-    const res = await fetch(selectedServer.addr + '/api/download', {
+    const res = await httpFetch(selectedServer.addr + '/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: selectedUser })
@@ -2098,7 +2134,7 @@ async function localFullUpload() {
   statusEl.textContent = '正在全量上传...';
   try {
     const items = getItems();
-    const res = await fetch(ctx.server + '/api/full_sync', {
+    const res = await httpFetch(ctx.server + '/api/full_sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: ctx.user, records: items })
@@ -2125,7 +2161,7 @@ async function localFullDownload() {
   const statusEl = document.getElementById('syncStatus');
   statusEl.textContent = '正在全量下载...';
   try {
-    const res = await fetch(ctx.server + '/api/download', {
+    const res = await httpFetch(ctx.server + '/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_name: ctx.user })
